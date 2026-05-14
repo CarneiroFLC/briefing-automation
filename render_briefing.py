@@ -210,7 +210,7 @@ def card_etf(e: dict, ativo: str, farside_url: str) -> str:
 
   <!-- gráfico acumulado estilo Farside -->
   <div class="clbl" style="margin-top:.5rem">Fluxo acumulado histórico (US$M) — estilo Farside</div>
-  <div style="height:108px;margin-bottom:.375rem">{svg_area}</div>
+  <div style="height:108px;margin-bottom:1.25rem">{svg_area}</div>
   <div class="an" style="margin-bottom:.5rem"><strong>Leitura:</strong> {e['analise']} {e['grafico_acumulado_analise']}</div>
 
   <!-- botão Farside -->
