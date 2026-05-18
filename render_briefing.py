@@ -169,6 +169,45 @@ def svg_acumulado(meses: list, ativo: str) -> str:
 </svg>"""
 
 
+# ─── mini gráfico sentimento (histórico 7 dias) ──────────────────────────────
+
+def svg_sentimento(historico: list) -> str:
+    """
+    Mini gráfico de linha para o histórico de 7 dias do sentimento.
+    """
+    if not historico or len(historico) < 2:
+        return ""
+    
+    valores = historico
+    n = len(valores)
+    vmax = max(valores)
+    vmin = min(valores)
+    rng = vmax - vmin if vmax != vmin else 1
+
+    W, H = 80, 24
+    
+    # normaliza pontos
+    pts = []
+    for i, v in enumerate(valores):
+        x = int(i / (n - 1) * (W - 4)) + 2
+        y = int(20 - ((v - vmin) / rng * 16))
+        pts.append((x, y))
+    
+    # linha
+    line = " ".join(f"L{x},{y}" for x, y in pts)
+    line = f"M{pts[0][0]},{pts[0][1]} " + line
+    
+    # círculos
+    circles = ""
+    for x, y in pts:
+        circles += f'<circle cx="{x}" cy="{y}" r="2" fill="#f59e0b"/>\n'
+    
+    return f'''<svg width="80" height="24" viewBox="0 0 80 24" style="display:inline-block;vertical-align:middle;margin:0 4px">
+  <polyline points="{" ".join(f"{x},{y}" for x, y in pts)}" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  {circles}
+</svg>'''
+
+
 # ─── card ETF completo ────────────────────────────────────────────────────────
 
 def card_etf(e: dict, ativo: str, farside_url: str) -> str:
@@ -301,6 +340,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .ml{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#71717a;margin-bottom:2px}
 .mv{font-size:15px;font-weight:800}.ms{font-size:9.5px;color:#71717a;margin-top:1px}
 .cg{color:#16a34a}.cr{color:#dc2626}.ca{color:#d97706}.cb{color:#2563eb}
+.sent{max-width:100%;margin:0 auto 1rem;padding:.625rem 1rem;background:linear-gradient(135deg,#fef3c7 0%,#fde68a 100%);border-left:4px solid #f59e0b;border-radius:10px;box-shadow:0 2px 12px rgba(245,158,11,.15)}
+.sent-c{display:flex;align-items:center;justify-content:center;gap:.625rem;flex-wrap:wrap;font-size:13px}
+.sent-l{color:#78716c;font-weight:600}
+.sent-v{font-weight:700;font-size:14px;padding:4px 12px;border-radius:8px;white-space:nowrap}
+.sent-v.sentiment-red{background:#fee2e2;color:#dc2626;border:1px solid #fca5a5}
+.sent-v.sentiment-orange{background:#ffedd5;color:#ea580c;border:1px solid #fdba74}
+.sent-v.sentiment-green{background:#dcfce7;color:#16a34a;border:1px solid #86efac}
+.sent-ch{display:inline-block;vertical-align:middle;filter:drop-shadow(0 1px 2px rgba(0,0,0,.1))}
+.sent-x{color:#57534e;font-size:12px;font-weight:600;background:rgba(255,255,255,.6);padding:3px 9px;border-radius:6px}
 .sl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#71717a;margin-bottom:.5rem;padding-left:2px}
 .sec{margin-bottom:1.125rem}
 .card{background:#fff;border:1px solid #e4e4e7;border-radius:11px;padding:.875rem 1.125rem;margin-bottom:.5rem}
@@ -385,6 +433,21 @@ def render(data: dict) -> str:
     th  = data["termometro"]
     cal = data["calendario"]
 
+    # HTML do sentimento cripto
+    sent_html = ""
+    if "sentimento_cripto" in data:
+        s = data["sentimento_cripto"]
+        svg_sent = svg_sentimento(s.get("historico_7d", []))
+        sent_html = f'''
+<div class="sent">
+  <div class="sent-c">
+    <span class="sent-l">Sentimento do Mercado:</span>
+    <span class="sent-v {s['cor_fundo']}">{s['indice']} {s['emoji']} {s['classificacao']}</span>
+    {svg_sent}
+    <span class="sent-x">{s['variacao_emoji']} {s['variacao_7d']} pontos (7d)</span>
+  </div>
+</div>'''
+
     html = f"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -407,6 +470,8 @@ def render(data: dict) -> str:
   <div class="mi"><div class="ml">💵 Dólar</div><div class="mv cb">{mb['dolar']}</div><div class="ms">{mb['dolar_sub']}</div></div>
   <div class="mi"><div class="ml">🛢️ Brent</div><div class="mv {mb['brent_cor']}">{mb['brent']}</div><div class="ms">{mb['brent_var']}</div></div>
 </div>
+
+{sent_html}
 
 <div class="sec"><div class="sl">🏦 Bancos Centrais</div>{card_section(data['banco_central'])}</div>
 <div class="sec"><div class="sl">🇺🇸 Macro Global & Declarações do Presidente dos EUA</div>{card_section(data['trump_macro'])}</div>
