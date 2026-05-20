@@ -1,0 +1,58 @@
+name: Render Briefing PDF
+
+on:
+  schedule:
+    # Roda todos os dias úteis (seg-sex) às 06:30 da manhã
+    # (15 minutos DEPOIS que o Routine do Claude rodar)
+    - cron: '30 6 * * 1-5'
+  
+  # Permite rodar manualmente se quiser testar
+  workflow_dispatch
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Render briefing
+        run: |
+          HOJE=$(date +%Y%m%d)
+          JSON_FILE="output/briefing_$HOJE.json"
+          
+          if [ -f "$JSON_FILE" ]; then
+            echo "✅ Encontrado: $JSON_FILE"
+            python scripts/render_briefing.py "$JSON_FILE"
+            echo "✅ Renderização concluída!"
+          else
+            echo "⚠️ JSON de hoje não encontrado. Talvez o Routine não tenha rodado ainda."
+            echo "Arquivo esperado: $JSON_FILE"
+          fi
+      
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: briefing-output-${{ github.run_id }}
+          path: output/briefing_*.{html,pdf}
+          retention-days: 30
+      
+      - name: Commit e push dos arquivos gerados
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add output/briefing_*.html output/briefing_*.pdf
+          git commit -m "Add rendered briefing $(date +%Y-%m-%d)" || echo "Nada para fazer"
+          git push
+        continue-on-error: true
