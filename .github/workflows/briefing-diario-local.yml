@@ -3,7 +3,7 @@ name: 📊 Briefing Diário Automático (Local)
 on:
   schedule:
     - cron: "0 10 * * 1-5"
-  workflow_dispatch
+  workflow_dispatch:
 
 jobs:
   briefing:
@@ -11,10 +11,10 @@ jobs:
     
     steps:
       - name: 📥 Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       
       - name: 🐍 Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
@@ -33,7 +33,7 @@ jobs:
       - name: 📂 Verificar arquivos gerados
         run: |
           echo "Arquivos gerados:"
-          ls -lh output/briefing_*
+          ls -lh output/briefing_* || echo "Nenhum arquivo encontrado em output/"
       
       - name: 📝 Commit dos arquivos
         run: |
@@ -45,5 +45,5 @@ jobs:
       
       - name: ✅ Sucesso!
         run: |
-          echo "Pipeline concluido com sucesso!"
-          echo "Briefing gerado e salvo no repositorio"
+          echo "Pipeline concluído com sucesso!"
+          echo "Briefing gerado e salvo no repositório"
