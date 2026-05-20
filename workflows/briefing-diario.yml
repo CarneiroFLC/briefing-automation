@@ -1,0 +1,76 @@
+name: Briefing Diário Automático
+
+on:
+  workflow_dispatch:
+    inputs:
+      data:
+        description: "Data do briefing (YYYY-MM-DD)"
+        required: false
+        default: ""
+  schedule:
+    # Todos os dias úteis às 7:00 AM (Horário de Brasília = UTC-3)
+    # 7:00 AM BRT = 10:00 AM UTC
+    - cron: "0 10 * * 1-5"
+
+jobs:
+  briefing:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout repo
+        uses: actions/checkout@v3
+      
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      
+      - name: 📦 Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 feedparser weasyprint pillow
+      
+      - name: 📡 Etapa 1: Web Scraping & JSON
+        run: |
+          echo "🔍 Iniciando coleta de dados..."
+          python scripts/scraper_briefing.py
+          echo "✅ JSON gerado com sucesso"
+      
+      - name: 📊 Etapa 2: Renderizar HTML/PDF
+        run: |
+          echo "🎨 Renderizando HTML..."
+          python scripts/render_briefing.py
+          echo "✅ HTML e PDF gerados"
+      
+      - name: 🔐 Etapa 3: Autenticar no Google Drive
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+      
+      - name: 📤 Etapa 4: Setup Google Drive API
+        uses: google-github-actions/setup-gcloud@v1
+      
+      - name: 🚀 Etapa 5: Upload ao Google Drive
+        run: |
+          python scripts/upload_gdrive.py \
+            --folder-id "${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}" \
+            --json-file "output/briefing_*.json" \
+            --html-file "output/briefing_*.html" \
+            --pdf-file "output/briefing_*.pdf"
+          echo "✅ Upload concluído ao Google Drive"
+      
+      - name: 📝 Etapa 6: Commit ao repo
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add output/briefing_*.json output/briefing_*.html output/briefing_*.pdf
+          git commit -m "📊 Briefing diário - $(date +'%Y-%m-%d')" || true
+          git push
+      
+      - name: ✅ Sucesso!
+        run: |
+          echo "🎉 Pipeline concluído com sucesso!"
+          echo "📁 Arquivos gerados:"
+          ls -lh output/briefing_*
+          echo "📍 Google Drive: /Meu Drive/Briefing Diário/"
