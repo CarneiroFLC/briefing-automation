@@ -1,11 +1,8 @@
 name: 📊 Briefing Diário Automático (Local)
 
 on:
-  # Agenda: Todos os dias úteis às 7 AM BRT (10 AM UTC)
   schedule:
     - cron: "0 10 * * 1-5"
-  
-  # Permite disparar manualmente
   workflow_dispatch
 
 jobs:
@@ -27,15 +24,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 weasyprint pillow
       
-      - name: 📡 Etapa 1: Gerar Briefing
+      - name: 📡 Gerar Briefing
         run: |
-          echo "🔍 Iniciando geração do briefing..."
+          echo "Iniciando geração do briefing..."
           python scripts/briefing_generator.py
-          echo "✅ Briefing gerado com sucesso"
+          echo "Briefing gerado com sucesso"
       
       - name: 📂 Verificar arquivos gerados
         run: |
-          echo "📁 Arquivos gerados:"
+          echo "Arquivos gerados:"
           ls -lh output/briefing_*
       
       - name: 📝 Commit dos arquivos
@@ -43,11 +40,10 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Briefing Bot"
           git add output/briefing_*.json output/briefing_*.html output/briefing_*.pdf 2>/dev/null || true
-          git commit -m "📊 Briefing diário - $(date +'%Y-%m-%d %H:%M')" || echo "Nada para commitar"
+          git commit -m "Briefing diario - $(date +'%Y-%m-%d %H:%M')" || echo "Nada para commitar"
           git push
       
       - name: ✅ Sucesso!
         run: |
-          echo "🎉 Pipeline concluído com sucesso!"
-          echo "📊 Briefing gerado e salvo no repositório"
-          echo "📁 Acesse: output/briefing_$(date +'%Y%m%d').html"
+          echo "Pipeline concluido com sucesso!"
+          echo "Briefing gerado e salvo no repositorio"
