@@ -106,6 +106,9 @@ def svg_acumulado(meses: list, ativo: str) -> str:
         return PAD_T + plot_h - int((v - vmin) / rng * plot_h)
 
     zero_y = px(0)
+    # Clamp zero_y dentro do plot para evitar overflow quando todos os valores
+    # são positivos (BTC) ou todos negativos (ETH)
+    zero_y_clamped = max(PAD_T, min(PAD_T + plot_h, zero_y))
 
     # pontos da linha
     pts = []
@@ -114,7 +117,7 @@ def svg_acumulado(meses: list, ativo: str) -> str:
         y = px(v)
         pts.append((x, y))
 
-    # path da área (fecha pelo zero)
+    # path da área (fecha pelo zero — sempre dentro do viewBox)
     path_pts = " ".join(f"{x},{y}" for x, y in pts)
     x_start = pts[0][0]
     x_end   = pts[-1][0]
@@ -124,9 +127,9 @@ def svg_acumulado(meses: list, ativo: str) -> str:
     cor_area_opacity = "0.18"
 
     area_path = (
-        f"M{x_start},{zero_y} "
+        f"M{x_start},{zero_y_clamped} "
         + " ".join(f"L{x},{y}" for x, y in pts)
-        + f" L{x_end},{zero_y} Z"
+        + f" L{x_end},{zero_y_clamped} Z"
     )
     line_path = "M" + " L".join(f"{x},{y}" for x, y in pts)
 
