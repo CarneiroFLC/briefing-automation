@@ -1,13 +1,10 @@
 """
 render_briefing.py
 ==================
-Converte briefing_YYYYMMDD.json → briefing_YYYYMMDD.html + .pdf
+Converte briefing_YYYYMMDD.json → briefing_YYYYMMDD.html
 
 Uso:
     python render_briefing.py briefing_20260512.json
-
-Dependências:
-    pip install weasyprint
 """
 
 import json
@@ -469,17 +466,7 @@ def main():
     html_path.write_text(html, encoding="utf-8")
     print(f"✅ HTML gerado: {html_path.name}")
 
-    # Gera PDF
-    pdf_path = json_path.with_suffix(".pdf")
-    try:
-        from weasyprint import HTML
-        HTML(filename=str(html_path)).write_pdf(str(pdf_path))
-        print(f"✅ PDF gerado:  {pdf_path.name}")
-    except ImportError:
-        print("⚠️  WeasyPrint não instalado — PDF não gerado.")
-        print("   Instale com: pip install weasyprint")
-
-    print(f"\n🎯 Pronto! Arquivos em: {json_path.parent.resolve()}")
+    print(f"\n🎯 Pronto! Arquivo em: {json_path.parent.resolve()}")
 
 
 if __name__ == "__main__":
