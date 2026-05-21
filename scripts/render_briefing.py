@@ -45,34 +45,6 @@ def card_section(items: list) -> str:
     return html
 
 
-def render_fear_greed(fg: dict) -> str:
-    """Renderiza barra visual de Fear & Greed Index"""
-    valor = int(fg["valor"])
-    # Posição percentual na barra (0-100)
-    posicao = max(0, min(100, valor))
-    
-    return f"""
-<div class="fg-bar">
-  <div class="fg-label">😨 Fear & Greed Index</div>
-  <div class="fg-container">
-    <div class="fg-track">
-      <div class="fg-fill"></div>
-      <div class="fg-indicator" style="left:{posicao}%"></div>
-    </div>
-    <div class="fg-value">{valor}</div>
-  </div>
-  <div class="fg-legend">
-    <div class="fg-legend-item">Extremo<br>Medo</div>
-    <div class="fg-legend-item">Medo</div>
-    <div class="fg-legend-item">Neutro</div>
-    <div class="fg-legend-item">Ganância</div>
-    <div class="fg-legend-item">Extrema<br>Ganância</div>
-  </div>
-  <div style="font-size:11px;color:#52525b;margin-top:.5rem;text-align:center"><strong>{fg["sentimento"]}</strong></div>
-</div>"""
-
-
-
 # ─── gráfico SVG semanal ─────────────────────────────────────────────────────
 
 def svg_semanal(g: dict) -> str:
@@ -91,11 +63,10 @@ def svg_semanal(g: dict) -> str:
             bars += f'<text x="{xs[i]}" y="{int(ly)+14}" font-size="6.5" fill="{lc}" text-anchor="middle">aguardando</text>\n'
         else:
             bars += f'<text x="{xs[i]}" y="{ly}" font-size="8" fill="{lc}" text-anchor="middle" font-weight="700">{val}</text>\n'
-        # labels_x ajustados para não sobrepor
-        labels_x += f'<text x="{xs[i]}" y="107" font-size="6" fill="#71717a" text-anchor="middle">{d["data"]}</text>\n'
+        labels_x += f'<text x="{xs[i]}" y="104" font-size="7" fill="#71717a" text-anchor="middle">{d["data"]}</text>\n'
 
     return f"""
-<svg viewBox="0 0 560 115" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 560 110" xmlns="http://www.w3.org/2000/svg">
   <line x1="48" y1="10" x2="545" y2="10" stroke="#f4f4f5" stroke-width="1"/>
   <line x1="48" y1="33" x2="545" y2="33" stroke="#f4f4f5" stroke-width="1"/>
   <line x1="48" y1="62" x2="545" y2="62" stroke="#e4e4e7" stroke-width="1" stroke-dasharray="3,3"/>
@@ -124,8 +95,8 @@ def svg_acumulado(meses: list, ativo: str) -> str:
     vmin = min(valores)
     rng  = vmax - vmin if vmax != vmin else 1
 
-    W, H = 520, 105
-    PAD_L, PAD_R, PAD_T, PAD_B = 52, 10, 8, 23
+    W, H = 520, 115
+    PAD_L, PAD_R, PAD_T, PAD_B = 52, 10, 8, 28
 
     plot_w = W - PAD_L - PAD_R
     plot_h = H - PAD_T - PAD_B
@@ -162,12 +133,12 @@ def svg_acumulado(meses: list, ativo: str) -> str:
     )
     line_path = "M" + " L".join(f"{x},{y}" for x, y in pts)
 
-    # labels eixo X — mostrar a cada ~4-6 meses para não sobrepor
+    # labels eixo X — mostrar a cada ~4-5 meses para não sobrepor
     step = max(1, n // 5)
     x_labels = ""
     for i in range(0, n, step):
         x = PAD_L + int(i / (n - 1) * plot_w)
-        x_labels += f'<text x="{x}" y="{H - 1}" font-size="6" fill="#a1a1aa" text-anchor="middle">{labels[i]}</text>\n'
+        x_labels += f'<text x="{x}" y="{H - 1}" font-size="5.5" fill="#a1a1aa" text-anchor="middle">{labels[i]}</text>\n'
 
     # labels eixo Y
     y_vals = [vmax, (vmax + vmin) / 2, vmin]
@@ -242,8 +213,8 @@ def card_etf(e: dict, ativo: str, farside_url: str) -> str:
 
   <!-- gráfico acumulado estilo Farside -->
   <div class="clbl" style="margin-top:.5rem">Fluxo acumulado histórico (US$M) — estilo Farside</div>
-  <div style="height:113px;margin-bottom:.375rem">{svg_area}</div>
-  <div class="an" style="margin-bottom:.5rem"><strong>Leitura:</strong> {e['analise']} {e['grafico_acumulado_analise']}</div>
+  <div style="height:130px;margin-bottom:.75rem">{svg_area}</div>
+  <div class="an" style="margin-bottom:.75rem"><strong>Leitura:</strong> {e['analise']} {e['grafico_acumulado_analise']}</div>
 
   <!-- botão Farside -->
   <a href="{farside_url}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:#1d4ed8;background:#eff6ff;border:1px solid #bfdbfe;border-radius:20px;padding:4px 12px;text-decoration:none;margin-bottom:.375rem">
@@ -405,15 +376,6 @@ tr:hover td{background:#fafafa}
 .ol{font-size:9px;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}
 .ot{font-size:11.5px;color:#14532d;line-height:1.45}
 .disc{font-size:10px;color:#a1a1aa;margin-top:.875rem;text-align:center;line-height:1.5}
-.fg-bar{background:#fff;border:1px solid #e4e4e7;border-radius:10px;padding:.75rem 1rem;margin-bottom:.5rem}
-.fg-label{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#71717a;margin-bottom:.5rem}
-.fg-container{display:flex;align-items:center;gap:.75rem;margin-bottom:.375rem}
-.fg-track{flex:1;height:24px;background:#f4f4f5;border-radius:6px;position:relative;overflow:hidden;border:1px solid #e4e4e7}
-.fg-fill{height:100%;background:linear-gradient(90deg,#d32f2f,#ff6f00,#ffc107,#66bb6a,#2e7d32);width:100%}
-.fg-indicator{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:3px;height:28px;background:#18181b;border-radius:2px;z-index:10}
-.fg-value{font-size:18px;font-weight:800;min-width:45px;text-align:center;color:#18181b}
-.fg-legend{display:flex;justify-content:space-between;font-size:8px;color:#a1a1aa;font-weight:600;margin-top:.375rem}
-.fg-legend-item{text-align:center;flex:1}
 @media print{body{background:#fff;padding:0}.w{max-width:100%}.card,.tw,.thm,.mi,.si,.tot{break-inside:avoid}}
 """
 
@@ -448,8 +410,6 @@ def render(data: dict) -> str:
   <div class="mi"><div class="ml">💵 Dólar</div><div class="mv cb">{mb['dolar']}</div><div class="ms">{mb['dolar_sub']}</div></div>
   <div class="mi"><div class="ml">🛢️ Brent</div><div class="mv {mb['brent_cor']}">{mb['brent']}</div><div class="ms">{mb['brent_var']}</div></div>
 </div>
-
-{render_fear_greed(data['macro_bar']['fear_greed'])}
 
 <div class="sec"><div class="sl">🏦 Bancos Centrais</div>{card_section(data['banco_central'])}</div>
 <div class="sec"><div class="sl">🇺🇸 Macro Global & Declarações do Presidente dos EUA</div>{card_section(data['trump_macro'])}</div>
