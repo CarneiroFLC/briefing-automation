@@ -328,7 +328,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .hdr{background:#18181b;color:#fff;border-radius:12px;padding:1rem 1.5rem;margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem}
 .hdr h1{font-size:16px;font-weight:700}.hdr p{font-size:11px;color:#a1a1aa;margin-top:2px}
 .date-p{font-size:11px;font-weight:700;background:#3f3f46;color:#e4e4e7;padding:4px 12px;border-radius:20px;white-space:nowrap}
-.mbar{display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem;margin-bottom:1rem}
+.mbar{display:grid;grid-template-columns:repeat(5,1fr);gap:.5rem;margin-bottom:1rem}
 .mi{background:#fff;border:1px solid #e4e4e7;border-radius:10px;padding:.5rem .75rem}
 .ml{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#71717a;margin-bottom:2px}
 .mv{font-size:15px;font-weight:800}.ms{font-size:9.5px;color:#71717a;margin-top:1px}
@@ -438,6 +438,7 @@ def render(data: dict) -> str:
   <div class="mi"><div class="ml">Ξ Ethereum</div><div class="mv {mb['eth_cor']}">{mb['eth_preco']}</div><div class="ms">{mb['eth_var']}</div></div>
   <div class="mi"><div class="ml">💵 Dólar</div><div class="mv cb">{mb['dolar']}</div><div class="ms">{mb['dolar_sub']}</div></div>
   <div class="mi"><div class="ml">🛢️ Brent</div><div class="mv {mb['brent_cor']}">{mb['brent']}</div><div class="ms">{mb['brent_var']}</div></div>
+  <div class="mi"><div class="ml">😱 Fear &amp; Greed</div><div class="mv" style="color:{mb.get('fear_greed', {}).get('cor', '#71717a')}">{mb.get('fear_greed', {}).get('valor', 'N/D')}</div><div class="ms">{mb.get('fear_greed', {}).get('sentimento', 'dado não disponível')}</div></div>
 </div>
 
 <div class="sec"><div class="sl">🏦 Bancos Centrais</div>{card_section(data['banco_central'])}</div>
