@@ -3,486 +3,538 @@ render_briefing.py
 ==================
 Converte briefing_YYYYMMDD.json → briefing_YYYYMMDD.html
 
+Tema escuro (modelo aprovado em 15/06/2026).
+Consome o mesmo schema JSON definido em prompt_briefing.md.
+
 Uso:
-    python render_briefing.py briefing_20260512.json
+    python render_briefing.py output/briefing_20260615.json
 """
 
 import json
 import sys
-import re
 from pathlib import Path
-from datetime import date, datetime
+from datetime import datetime
 
 
-# ─── helpers ─────────────────────────────────────────────────────────────────
+# ─── helpers de cor ──────────────────────────────────────────────────────────
+
+# Mapeia as classes curtas do JSON (cg/cr/ca/cb e vg/va/vr) para HEX do tema.
+COR = {
+    "cg": "#16a34a", "cr": "#dc2626", "ca": "#d97706", "cb": "#3b82f6",
+    "vg": "#16a34a", "va": "#d97706", "vr": "#dc2626",
+}
+
+def cor(classe: str, padrao: str = "#e2e8f0") -> str:
+    return COR.get(classe, padrao)
+
 
 def get_last_3_months() -> tuple:
     """
-    Retorna os últimos 3 meses no formato (mês-2, mês-1, mês-atual)
-    Ex: se estamos em maio/2026 → ("março", "abril", "maio")
-         se estamos em junho/2026 → ("abril", "maio", "junho")
+    Retorna os últimos 3 meses (mês-2, mês-1, mês-atual) capitalizados.
+    Ex.: em junho/2026 → ("Abril", "Maio", "Junho")
     """
     meses = {
-        1: "janeiro", 2: "fevereiro", 3: "março", 4: "abril",
-        5: "maio", 6: "junho", 7: "julho", 8: "agosto",
-        9: "setembro", 10: "outubro", 11: "novembro", 12: "dezembro"
+        1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+        5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+        9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
     }
-    
     hoje = datetime.now()
-    mes_atual = hoje.month
-    
-    mes_1 = (mes_atual - 2)
-    if mes_1 <= 0:
-        mes_1 += 12
-    
-    mes_2 = (mes_atual - 1)
-    if mes_2 <= 0:
-        mes_2 += 12
-    
-    return (meses[mes_1], meses[mes_2], meses[mes_atual])
+    m = hoje.month
+    m1 = m - 2 if m - 2 > 0 else m - 2 + 12
+    m2 = m - 1 if m - 1 > 0 else m - 1 + 12
+    return (meses[m1], meses[m2], meses[m])
 
 
-def tag(t: dict) -> str:
-    return f'<span class="tag {t["cor"]}">{t["texto"]}</span>'
+# ─── cards genéricos (banco_central, trump, cripto, brasil) ──────────────────
 
-def fonte(f: dict) -> str:
-    return f'<a class="src" href="{f["url"]}" target="_blank">{f["nome"]} ↗</a>'
+def tag_html(t: dict) -> str:
+    return f'<span class="tag {t.get("cor","tn")}">{t.get("texto","")}</span>'
 
-def card_section(items: list) -> str:
-    html = ""
-    for item in items:
-        tags_html  = "".join(tag(t) for t in item.get("tags", []))
-        fontes_html = "".join(fonte(f) for f in item.get("fontes", []))
-        html += f"""
-<div class="card">
-  <div class="card-hd">
-    <div class="ctg">
-      <div class="ico">{item["icone"]}</div>
-      <span class="ct">{item["titulo"]}</span>
-    </div>
-    <span class="imp {item['impacto_classe']}">{item['impacto']}</span>
-  </div>
-  <div class="bd">{item["corpo"]}</div>
-  <div class="meta">{tags_html}{fontes_html}</div>
-</div>"""
-    return html
+def fonte_html(f: dict) -> str:
+    return (f'<a href="{f.get("url","#")}" target="_blank" rel="noopener" '
+            f'class="fonte-link">{f.get("nome","fonte")}</a>')
+
+def card_html(item: dict) -> str:
+    tags = "".join(tag_html(t) for t in item.get("tags", []))
+    fontes = "".join(fonte_html(f) for f in item.get("fontes", []))
+    tags_block = f'<div class="tags">{tags}</div>' if tags else ""
+    fontes_block = f'<div class="fontes">{fontes}</div>' if fontes else ""
+    return f"""
+    <div class="card">
+      <div class="card-header">
+        <span class="card-icon">{item.get('icone','•')}</span>
+        <div class="card-title-wrap">
+          <span class="card-titulo">{item.get('titulo','')}</span>
+          <span class="impacto-badge {item.get('impacto_classe','imp-m')}">{item.get('impacto','')}</span>
+        </div>
+      </div>
+      <div class="card-corpo">{item.get('corpo','')}</div>
+      {tags_block}
+      {fontes_block}
+    </div>"""
+
+def cards_grid(items: list) -> str:
+    if not items:
+        return '<div class="cards-grid"></div>'
+    return f'<div class="cards-grid">{"".join(card_html(i) for i in items)}</div>'
 
 
-# ─── gráfico SVG semanal ─────────────────────────────────────────────────────
+# ─── gráfico semanal (barras) ────────────────────────────────────────────────
 
 def svg_semanal(g: dict) -> str:
-    xs = [89, 177, 265, 353, 441]
+    """
+    Barras de fluxo diário. viewBox 304x145, linha do zero em y=62.
+    Lê os campos já calculados no JSON (y, h, cor, valor, label_y, label_cor).
+    """
+    dias = g.get("dias", [])
+    xs = [64, 112, 160, 208, 256]
     bars = ""
-    labels_x = ""
-    for i, d in enumerate(g["dias"]):
-        x = xs[i] - 34
-        bars += f'<rect x="{x}" y="{d["y"]}" width="68" height="{d["h"]}" fill="{d["cor"]}" rx="3"/>\n'
-        # label do valor
-        ly = d["label_y"]
-        lc = d["label_cor"]
-        val = d["valor"]
+    labels = ""
+    for i, d in enumerate(dias[:5]):
+        x = xs[i] - 16
+        y = d.get("y", 62)
+        h = max(1, d.get("h", 1))
+        c = d.get("cor", "#d1d5db")
+        bars += f'<rect x="{x}" y="{y}" width="32" height="{h}" rx="3" fill="{c}"/>'
+        val = d.get("valor", "")
+        ly = d.get("label_y", 52)
+        lc = d.get("label_cor", "#9ca3af")
         if val == "aguardando":
-            bars += f'<text x="{xs[i]}" y="{ly}" font-size="7" fill="{lc}" text-anchor="middle">{d["data"].split(" ")[0]}</text>\n'
-            bars += f'<text x="{xs[i]}" y="{int(ly)+14}" font-size="6.5" fill="{lc}" text-anchor="middle">aguardando</text>\n'
+            bars += (f'<text x="{xs[i]}" y="{ly}" text-anchor="middle" '
+                     f'font-size="7" fill="{lc}">—</text>')
         else:
-            bars += f'<text x="{xs[i]}" y="{ly}" font-size="8" fill="{lc}" text-anchor="middle" font-weight="700">{val}</text>\n'
-        labels_x += f'<text x="{xs[i]}" y="104" font-size="7" fill="#71717a" text-anchor="middle">{d["data"]}</text>\n'
+            bars += (f'<text x="{xs[i]}" y="{ly}" text-anchor="middle" '
+                     f'font-size="8" font-weight="600" fill="{lc}">{val}</text>')
+        labels += (f'<text x="{xs[i]}" y="128" text-anchor="middle" '
+                   f'font-size="7.5" fill="#6b7280">{d.get("data","")}</text>')
 
-    return f"""
-<svg viewBox="0 0 560 110" xmlns="http://www.w3.org/2000/svg">
-  <line x1="48" y1="10" x2="545" y2="10" stroke="#f4f4f5" stroke-width="1"/>
-  <line x1="48" y1="33" x2="545" y2="33" stroke="#f4f4f5" stroke-width="1"/>
-  <line x1="48" y1="62" x2="545" y2="62" stroke="#e4e4e7" stroke-width="1" stroke-dasharray="3,3"/>
-  <line x1="48" y1="91" x2="545" y2="91" stroke="#f4f4f5" stroke-width="1"/>
-  <text x="42" y="13" font-size="7.5" fill="#a1a1aa" text-anchor="end">{g['escala_max']}</text>
-  <text x="42" y="36" font-size="7.5" fill="#a1a1aa" text-anchor="end">{g['escala_meio']}</text>
-  <text x="42" y="65" font-size="7.5" fill="#a1a1aa" text-anchor="end">0</text>
-  <text x="42" y="94" font-size="7.5" fill="#a1a1aa" text-anchor="end">{g['escala_neg']}</text>
-  {bars}
-  {labels_x}
+    return f"""<svg viewBox="0 0 304 145" width="100%" style="max-height:145px">
+{bars}
+<line x1="40" y1="62" x2="296" y2="62" stroke="#6b7280" stroke-width="0.8" stroke-dasharray="2,2"/>
+<text x="36" y="14" text-anchor="end" font-size="7" fill="#9ca3af">{g.get('escala_max','')}</text>
+<text x="36" y="36" text-anchor="end" font-size="7" fill="#9ca3af">{g.get('escala_meio','')}</text>
+<text x="36" y="65" text-anchor="end" font-size="7" fill="#9ca3af">0</text>
+<text x="36" y="95" text-anchor="end" font-size="7" fill="#9ca3af">{g.get('escala_neg','')}</text>
+{labels}
 </svg>"""
 
 
-# ─── gráfico SVG área acumulada ──────────────────────────────────────────────
+# ─── gráfico acumulado (linha) ───────────────────────────────────────────────
 
-def svg_acumulado(meses: list, ativo: str) -> str:
+def svg_acumulado(meses: list) -> str:
     """
-    Gera gráfico de área acumulada estilo Farside.
-    Valores em US$M. Positivo = azul escuro. Negativo = vermelho.
+    Linha do acumulado mensal. viewBox 320x80.
+    Aceita lista de {"label","acum"} em US$M.
     """
-    valores = [m["acum"] for m in meses]
-    labels  = [m["label"] for m in meses]
+    if not meses:
+        return '<svg viewBox="0 0 320 80" width="100%"></svg>'
+
+    valores = [m.get("acum", 0) for m in meses]
+    labels = [m.get("label", "") for m in meses]
     n = len(valores)
 
     vmax = max(valores)
     vmin = min(valores)
-    rng  = vmax - vmin if vmax != vmin else 1
+    rng = vmax - vmin if vmax != vmin else 1
 
-    W, H = 520, 115
-    PAD_L, PAD_R, PAD_T, PAD_B = 52, 10, 8, 28
-
+    PAD_L, PAD_R, PAD_T, PAD_B = 40, 10, 8, 24
+    W, H = 320, 80
     plot_w = W - PAD_L - PAD_R
     plot_h = H - PAD_T - PAD_B
 
-    # normaliza: y cresce para baixo
-    def px(v):
-        return PAD_T + plot_h - int((v - vmin) / rng * plot_h)
+    def x_of(i):
+        return PAD_L + (i / (n - 1) * plot_w if n > 1 else 0)
 
-    zero_y = px(0)
-    # Clamp zero_y dentro do plot para evitar overflow quando todos os valores
-    # são positivos (BTC) ou todos negativos (ETH)
-    zero_y_clamped = max(PAD_T, min(PAD_T + plot_h, zero_y))
+    def y_of(v):
+        return PAD_T + plot_h - (v - vmin) / rng * plot_h
 
-    # pontos da linha
-    pts = []
+    cor_linha = "#16a34a" if valores[-1] >= 0 else "#dc2626"
+
+    pts = " ".join(f"{x_of(i):.1f},{y_of(v):.1f}" for i, v in enumerate(valores))
+    poly = (f'<polyline points="{pts}" fill="none" stroke="{cor_linha}" '
+            f'stroke-width="1.8" stroke-linejoin="round"/>')
+
+    dots = ""
     for i, v in enumerate(valores):
-        x = PAD_L + int(i / (n - 1) * plot_w)
-        y = px(v)
-        pts.append((x, y))
+        x = x_of(i)
+        y = y_of(v)
+        if abs(v) >= 1000:
+            lbl = f"${v/1000:.1f}B" if v >= 0 else f"−${abs(v)/1000:.1f}B"
+        else:
+            lbl = f"${int(v)}M" if v >= 0 else f"−${int(abs(v))}M"
+        ly = y - 4 if v >= 0 else y + 10
+        dots += f'<circle cx="{x:.1f}" cy="{y:.1f}" r="2.5" fill="{cor_linha}"/>'
+        dots += (f'<text x="{x:.1f}" y="{H-4}" text-anchor="middle" '
+                 f'font-size="7" fill="#9ca3af">{labels[i]}</text>')
+        dots += (f'<text x="{x:.1f}" y="{ly:.1f}" text-anchor="middle" '
+                 f'font-size="6.5" fill="{cor_linha}" font-weight="600">{lbl}</text>')
 
-    # path da área (fecha pelo zero — sempre dentro do viewBox)
-    path_pts = " ".join(f"{x},{y}" for x, y in pts)
-    x_start = pts[0][0]
-    x_end   = pts[-1][0]
-
-    cor_area  = "#1d4ed8" if valores[-1] >= 0 else "#dc2626"
-    cor_linha = "#1e3a8a" if valores[-1] >= 0 else "#b91c1c"
-    cor_area_opacity = "0.18"
-
-    area_path = (
-        f"M{x_start},{zero_y_clamped} "
-        + " ".join(f"L{x},{y}" for x, y in pts)
-        + f" L{x_end},{zero_y_clamped} Z"
-    )
-    line_path = "M" + " L".join(f"{x},{y}" for x, y in pts)
-
-    # labels eixo X — mostrar a cada ~4-5 meses para não sobrepor
-    step = max(1, n // 5)
-    x_labels = ""
-    for i in range(0, n, step):
-        x = PAD_L + int(i / (n - 1) * plot_w)
-        x_labels += f'<text x="{x}" y="{H - 1}" font-size="5.5" fill="#a1a1aa" text-anchor="middle">{labels[i]}</text>\n'
-
-    # labels eixo Y
-    y_vals = [vmax, (vmax + vmin) / 2, vmin]
-    y_labels = ""
-    for v in y_vals:
-        y = px(v)
-        label = f"${int(v/1000)}B" if abs(v) >= 1000 else f"${int(v)}M"
-        if v < 0:
-            label = f"−${int(abs(v)/1000)}B" if abs(v) >= 1000 else f"−${int(abs(v))}M"
-        y_labels += f'<text x="{PAD_L - 4}" y="{y + 3}" font-size="6.5" fill="#a1a1aa" text-anchor="end">{label}</text>\n'
-
-    # linha do zero (se dentro do range)
-    zero_line = ""
-    if vmin < 0 < vmax:
-        zero_line = f'<line x1="{PAD_L}" y1="{zero_y}" x2="{W - PAD_R}" y2="{zero_y}" stroke="#94a3b8" stroke-width="0.5" stroke-dasharray="2,2"/>'
-
-    # grid horizontal sutil
-    grid = ""
-    for v in y_vals:
-        y = px(v)
-        grid += f'<line x1="{PAD_L}" y1="{y}" x2="{W - PAD_R}" y2="{y}" stroke="#f1f5f9" stroke-width="0.5"/>\n'
-
-    return f"""
-<svg viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg" style="overflow:visible">
-  {grid}
-  {zero_line}
-  <path d="{area_path}" fill="{cor_area}" fill-opacity="{cor_area_opacity}"/>
-  <path d="{line_path}" fill="none" stroke="{cor_linha}" stroke-width="1.5"/>
-  {y_labels}
-  {x_labels}
-</svg>"""
+    return f'<svg viewBox="0 0 320 80" width="100%" style="max-height:90px">{poly}{dots}</svg>'
 
 
-# ─── card ETF completo ────────────────────────────────────────────────────────
+# ─── seção ETF completa ──────────────────────────────────────────────────────
 
-def card_etf(e: dict, ativo: str, farside_url: str) -> str:
-    simbolo = "₿" if ativo == "BTC" else "Ξ"
-    t = e["totais"]
-
-    svg_week  = svg_semanal(e["grafico_semanal"])
-    svg_area  = svg_acumulado(e["grafico_acumulado"]["meses"], ativo)
-
-    # Obter últimos 3 meses dinamicamente
+def etf_section(e: dict, ativo: str, periodo_sem: str) -> str:
+    t = e.get("totais", {})
     mes_1, mes_2, mes_3 = get_last_3_months()
-    mes_1_cap = mes_1.capitalize()
-    mes_2_cap = mes_2.capitalize()
-    mes_3_cap = mes_3.capitalize()
+
+    svg_week = svg_semanal(e.get("grafico_semanal", {}))
+    svg_area = svg_acumulado(e.get("grafico_acumulado", {}).get("meses", []))
+
+    tot = f"""<div class="tot-grid">
+<div class="tot-row"><span class="tot-label">Semanal</span><span class="tot-val" style="color:{cor(t.get('semanal_cor'))}">{t.get('semanal_val','')}</span><span class="tot-sub">{t.get('semanal_sub','')}</span></div>
+<div class="tot-row"><span class="tot-label">YTD</span><span class="tot-val" style="color:{cor(t.get('ytd_cor'))}">{t.get('ytd_val','')}</span><span class="tot-sub">{t.get('ytd_sub','')}</span></div>
+<div class="tot-row"><span class="tot-label">Acumulado</span><span class="tot-val" style="color:{cor(t.get('acum_cor'))}">{t.get('acum_val','')}</span><span class="tot-sub">{t.get('acum_sub','')}</span></div>
+<div class="tot-row"><span class="tot-label">{mes_3}/26</span><span class="tot-val" style="color:{cor(t.get('mes_3_cor'))}">{t.get('mes_3_val','')}</span><span class="tot-sub"></span></div>
+<div class="tot-row"><span class="tot-label">{mes_2}/26</span><span class="tot-val" style="color:{cor(t.get('mes_2_cor'))}">{t.get('mes_2_val','')}</span><span class="tot-sub"></span></div>
+<div class="tot-row"><span class="tot-label">{mes_1}/26</span><span class="tot-val" style="color:{cor(t.get('mes_1_cor'))}">{t.get('mes_1_val','')}</span><span class="tot-sub"></span></div>
+</div>"""
+
+    analise = e.get("analise", "")
+    nota_acum = e.get("grafico_acumulado_analise", "")
 
     return f"""
-<div class="card">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.625rem;flex-wrap:wrap;gap:.4rem">
-    <div style="font-size:13px;font-weight:700">{simbolo} {ativo} — Spot ETF EUA</div>
-    <span class="imp {e['ytd_classe']}">YTD 2026 {e['ytd_label']}</span>
-  </div>
-
-  <!-- 6 totalizadores: linha 1 -->
-  <div class="tots">
-    <div class="tot"><div class="tl">📅 Semanal</div><div class="tv {t['semanal_cor']}">{t['semanal_val']}</div><div class="ts">{t['semanal_sub']}</div></div>
-    <div class="tot"><div class="tl">📊 YTD 2026</div><div class="tv {t['ytd_cor']}">{t['ytd_val']}</div><div class="ts">{t['ytd_sub']}</div></div>
-    <div class="tot"><div class="tl">🏦 Acumulado total</div><div class="tv {t['acum_cor']}">{t['acum_val']}</div><div class="ts">{t['acum_sub']}</div></div>
-  </div>
-
-  <!-- linha 2: últimos 3 meses (dinâmicos) -->
-  <div class="tots" style="margin-top:.25rem">
-    <div class="tot"><div class="tl">📆 {mes_1_cap} acum.</div><div class="tv {t['mes_1_cor']}" style="font-size:14px">{t['mes_1_val']}</div></div>
-    <div class="tot"><div class="tl">📆 {mes_2_cap} acum.</div><div class="tv {t['mes_2_cor']}" style="font-size:14px">{t['mes_2_val']}</div></div>
-    <div class="tot"><div class="tl">📆 {mes_3_cap} acum.</div><div class="tv {t['mes_3_cor']}" style="font-size:14px">{t['mes_3_val']}</div></div>
-  </div>
-
-  <!-- gráfico semanal -->
-  <div class="clbl" style="margin-top:.625rem">Fluxo diário — semana atual</div>
-  <div class="leg">
-    <div class="li"><div class="lsq" style="background:#16a34a"></div>Entrada</div>
-    <div class="li"><div class="lsq" style="background:#dc2626"></div>Saída</div>
-    <div class="li"><div class="lsq" style="background:#d1d5db"></div>Aguardando</div>
-  </div>
-  <div class="ch">{svg_week}</div>
-
-  <!-- gráfico acumulado estilo Farside -->
-  <div class="clbl" style="margin-top:.5rem">Fluxo acumulado histórico (US$M) — estilo Farside</div>
-  <div style="height:130px;margin-bottom:.75rem">{svg_area}</div>
-  <div class="an" style="margin-bottom:.75rem"><strong>Leitura:</strong> {e['analise']} {e['grafico_acumulado_analise']}</div>
-
-  <!-- botão Farside -->
-  <a href="{farside_url}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:#1d4ed8;background:#eff6ff;border:1px solid #bfdbfe;border-radius:20px;padding:4px 12px;text-decoration:none;margin-bottom:.375rem">
-    📊 Ver gráfico completo — Farside ↗
-  </a>
-
-  <div class="meta">
-    <a class="src" href="https://www.coinglass.com/etf/{'bitcoin' if ativo=='BTC' else 'ethereum'}" target="_blank">CoinGlass ↗</a>
-    <a class="src" href="{farside_url}" target="_blank">Farside ↗</a>
-    <a class="src" href="https://x.com/DocumentingBTC" target="_blank">𝕏 @DocumentingBTC</a>
-  </div>
-</div>"""
+    <div class="etf-section">
+      <div class="etf-header">
+        <h3 class="etf-title">ETF {ativo} — Spot US</h3>
+        <span class="ytd-badge {e.get('ytd_classe','imp-m')}">{e.get('ytd_label','')}</span>
+      </div>
+      <div class="etf-grid">
+        <div class="etf-col">
+          <div class="chart-label">Fluxo Semanal ({periodo_sem})</div>
+          {svg_week}
+        </div>
+        <div class="etf-col">
+          <div class="chart-label">Acumulado Mensal</div>
+          {svg_area}
+          <div class="acum-nota">{nota_acum}</div>
+        </div>
+      </div>
+      {tot}
+      <div class="etf-analise">{analise}</div>
+    </div>"""
 
 
 # ─── calendário ──────────────────────────────────────────────────────────────
 
-def render_calendario(cal: dict) -> str:
-    destaques_html = ""
-    for d in cal["destaques"]:
-        destaques_html += f'<div class="si"><div class="sn" style="color:{d["cor"]}">{d["valor"]}</div><div class="sl2">{d["label"]}<br>{d["data"]}</div></div>'
+def calendario_html(cal: dict) -> str:
+    destaques = ""
+    for d in cal.get("destaques", []):
+        data = f'<span class="dest-data">{d.get("data","")}</span>' if d.get("data") else ""
+        destaques += (f'<div class="dest-item"><span class="dest-icon" '
+                      f'style="color:{d.get("cor","#94a3b8")}">{d.get("valor","")}</span>'
+                      f'<span class="dest-label">{d.get("label","")}</span>{data}</div>')
 
-    # tabela hoje
-    intenso = '<span class="hp">DIA MAIS INTENSO</span>' if cal["hoje"].get("intenso") else ""
-    n = len(cal["hoje"]["empresas"])
-    rows = ""
-    for e in cal["hoje"]["empresas"]:
-        rows += f"""<tr>
-          <td><span class="tkr">{e['ticker']}</span></td>
-          <td class="emp">{e['empresa']}</td>
-          <td><span class="{e['horario_classe']}">{e['horario']}</span></td>
-          <td><span class="set">{e['setor']}</span></td>
-          <td><div class="ic"><span class="dot {e['impacto_dot']}"></span><span class="{e['impacto_txt']}">{e['impacto']}</span></div></td>
-          <td class="exp">{e['expectativa']}</td>
-        </tr>"""
+    hoje = cal.get("hoje", {})
+    empresas = hoje.get("empresas", [])
+    if empresas:
+        linhas = ""
+        for e in empresas:
+            linhas += (f'<div class="prox-row"><span class="prox-data">{e.get("horario","")}</span>'
+                       f'<span class="imp-dot {e.get("impacto_dot","dm")}"></span>'
+                       f'<span class="prox-nome">{e.get("ticker","")} · {e.get("empresa","")}</span>'
+                       f'<span class="prox-exp">{e.get("expectativa","")}</span></div>')
+        hoje_body = linhas
+    else:
+        hoje_body = '<div class="emp-empty">Nenhum resultado relevante hoje</div>'
 
-    # tabela próximas
-    prox_rows = ""
-    for p in cal["proximas"]:
-        prox_rows += f"""<tr>
-          <td class="dc">{p['data']}</td>
-          <td><span class="tkr">{p['ticker']}</span></td>
-          <td class="emp">{p['empresa']}</td>
-          <td><span class="set">{p['setor']}</span></td>
-          <td><div class="ic"><span class="dot {p['impacto_dot']}"></span><span class="{p['impacto_txt']}">{p['impacto']}</span></div></td>
-          <td class="exp">{p['expectativa']}</td>
-        </tr>"""
+    prox = ""
+    for p in cal.get("proximas", []):
+        prox += (f'<div class="prox-row"><span class="prox-data">{p.get("data","")}</span>'
+                 f'<span class="imp-dot {p.get("impacto_dot","dm")}"></span>'
+                 f'<span class="prox-nome">{p.get("empresa","")}</span>'
+                 f'<span class="prox-exp">{p.get("expectativa","")}</span></div>')
 
     return f"""
-<div class="cal-h">
-  <div><h3>🗓️ Calendário de Resultados — 1T26</h3><p>{cal['periodo']} · {cal['fase']}</p></div>
-  <span class="cpill">{cal['fase']}</span>
-</div>
-<div class="s4">{destaques_html}</div>
-
-<div style="margin-bottom:.875rem">
-  <div class="dlbl">{cal['hoje']['dia_label']} <span class="tp">HOJE</span>{intenso}<span class="cp">{n} empresa{'s' if n>1 else ''}</span></div>
-  <div class="tw">
-    <table>
-      <thead><tr><th>Ticker</th><th>Empresa</th><th>Horário</th><th>Setor</th><th>Impacto</th><th>Expectativa</th></tr></thead>
-      <tbody>{rows}</tbody>
-    </table>
-  </div>
-</div>
-
-<div>
-  <div class="dlbl">📅 Próximas datas-chave</div>
-  <div class="tw">
-    <table>
-      <thead><tr><th>Data</th><th>Ticker</th><th>Empresa / Evento</th><th>Setor</th><th>Impacto</th><th>Expectativa</th></tr></thead>
-      <tbody>{prox_rows}</tbody>
-    </table>
-  </div>
-</div>"""
+    <div class="calendario-section">
+      <h3 class="section-title">📅 Calendário — {cal.get('periodo','')}</h3>
+      <div class="fase-badge">{cal.get('fase','')}</div>
+      <div class="destaques-grid">{destaques}</div>
+      <div class="hoje-box">
+        <div class="hoje-label">{hoje.get('dia_label','Hoje')}</div>
+        {hoje_body}
+      </div>
+      <div class="proximas-box">
+        <div class="prox-title">Próximos eventos</div>
+        {prox}
+      </div>
+    </div>"""
 
 
-# ─── CSS ─────────────────────────────────────────────────────────────────────
+# ─── termômetro ──────────────────────────────────────────────────────────────
+
+def termometro_html(th: dict) -> str:
+    return f"""
+    <div class="termometro-section">
+      <h3 class="section-title">🌡️ Termômetro do Dia — {th.get('data_completa','')}</h3>
+      <div class="termo-grid">
+        <div class="termo-row"><span class="termo-label">Cripto</span><span class="termo-val" style="color:{cor(th.get('cripto_cor'))}">{th.get('cripto_val','')}</span><span class="termo-sub">{th.get('cripto_sub','')}</span></div>
+        <div class="termo-row"><span class="termo-label">B3</span><span class="termo-val" style="color:{cor(th.get('b3_cor'))}">{th.get('b3_val','')}</span><span class="termo-sub">{th.get('b3_sub','')}</span></div>
+        <div class="termo-row"><span class="termo-label">Dólar</span><span class="termo-val" style="color:{cor(th.get('dolar_cor'))}">{th.get('dolar_val','')}</span><span class="termo-sub">{th.get('dolar_sub','')}</span></div>
+        <div class="termo-row"><span class="termo-label">Brent</span><span class="termo-val" style="color:{cor(th.get('brent_cor'))}">{th.get('brent_val','')}</span><span class="termo-sub">{th.get('brent_sub','')}</span></div>
+      </div>
+      <div class="atencao-box"><span class="atencao-icon">⚠️</span> <strong>Atenção:</strong> {th.get('atencao','')}</div>
+      <div class="oportunidade-box"><span class="op-icon">💡</span> <strong>Insight do Analista:</strong> {th.get('oportunidade','')}</div>
+    </div>"""
+
+
+# ─── macro bar (com Fear & Greed circular) ───────────────────────────────────
+
+def macro_bar_html(mb: dict) -> str:
+    fg = mb.get("fear_greed", {})
+    fg_cor = fg.get("cor", "#6b7280")
+    fg_val = fg.get("valor", "N/D")
+    fg_sent = fg.get("sentimento", "dado não disponível")
+
+    return f"""
+    <div class="macro-bar">
+      <div class="macro-item">
+        <span class="macro-icon">₿</span>
+        <div>
+          <div class="macro-price" style="color:{cor(mb.get('btc_cor'))}">{mb.get('btc_preco','')}</div>
+          <div class="macro-sub" style="color:{cor(mb.get('btc_cor'))}">{mb.get('btc_var','')}</div>
+        </div>
+      </div>
+      <div class="macro-item">
+        <span class="macro-icon">Ξ</span>
+        <div>
+          <div class="macro-price" style="color:{cor(mb.get('eth_cor'))}">{mb.get('eth_preco','')}</div>
+          <div class="macro-sub" style="color:{cor(mb.get('eth_cor'))}">{mb.get('eth_var','')}</div>
+        </div>
+      </div>
+      <div class="macro-item">
+        <span class="macro-icon">💵</span>
+        <div>
+          <div class="macro-price">{mb.get('dolar','')}</div>
+          <div class="macro-sub">{mb.get('dolar_sub','')}</div>
+        </div>
+      </div>
+      <div class="macro-item">
+        <span class="macro-icon">🛢️</span>
+        <div>
+          <div class="macro-price" style="color:{cor(mb.get('brent_cor'))}">{mb.get('brent','')}</div>
+          <div class="macro-sub">{mb.get('brent_var','')}</div>
+        </div>
+      </div>
+      <div class="macro-item macro-fg">
+        <div class="fg-circle" style="border-color:{fg_cor}; color:{fg_cor}">{fg_val}</div>
+        <div>
+          <div class="macro-price" style="color:{fg_cor}">{fg_sent}</div>
+          <div class="macro-sub">Fear &amp; Greed</div>
+        </div>
+      </div>
+    </div>"""
+
+
+# ─── CSS (tema escuro, modelo 15/06) ─────────────────────────────────────────
 
 CSS = """
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f4f5;color:#18181b;padding:1.25rem 1rem;font-size:13px}
-.w{max-width:720px;margin:0 auto}
-.hdr{background:#18181b;color:#fff;border-radius:12px;padding:1rem 1.5rem;margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem}
-.hdr h1{font-size:16px;font-weight:700}.hdr p{font-size:11px;color:#a1a1aa;margin-top:2px}
-.date-p{font-size:11px;font-weight:700;background:#3f3f46;color:#e4e4e7;padding:4px 12px;border-radius:20px;white-space:nowrap}
-.mbar{display:grid;grid-template-columns:repeat(5,1fr);gap:.5rem;margin-bottom:1rem}
-.mi{background:#fff;border:1px solid #e4e4e7;border-radius:10px;padding:.5rem .75rem}
-.ml{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#71717a;margin-bottom:2px}
-.mv{font-size:15px;font-weight:800}.ms{font-size:9.5px;color:#71717a;margin-top:1px}
-.cg{color:#16a34a}.cr{color:#dc2626}.ca{color:#d97706}.cb{color:#2563eb}
-.sl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#71717a;margin-bottom:.5rem;padding-left:2px}
-.sec{margin-bottom:1.125rem}
-.card{background:#fff;border:1px solid #e4e4e7;border-radius:11px;padding:.875rem 1.125rem;margin-bottom:.5rem}
-.card:last-child{margin-bottom:0}
-.card-hd{display:flex;align-items:flex-start;justify-content:space-between;gap:.625rem;margin-bottom:.5rem}
-.ctg{display:flex;align-items:center;gap:.5rem;flex:1;min-width:0}
-.ico{width:28px;height:28px;border-radius:7px;background:#f4f4f5;border:1px solid #e4e4e7;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
-.ct{font-size:13px;font-weight:600;line-height:1.4;color:#18181b}
-.imp{font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;white-space:nowrap;flex-shrink:0}
-.imp-h{background:#fef2f2;color:#b91c1c}.imp-m{background:#fffbeb;color:#92400e}.imp-p{background:#f0fdf4;color:#166534}.imp-w{background:#fef3c7;color:#92400e}
-.bd{font-size:12px;color:#52525b;line-height:1.6}
-.bd strong{font-weight:600;color:#18181b}
-.meta{display:flex;align-items:center;gap:.375rem;margin-top:.5rem;flex-wrap:wrap}
-.tag{font-size:10px;font-weight:600;padding:2px 7px;border-radius:20px}
-.tg{background:#f0fdf4;color:#166534}.tr{background:#fef2f2;color:#b91c1c}.tn{background:#f4f4f5;color:#52525b;border:1px solid #e4e4e7}
-.src{display:inline-flex;gap:3px;font-size:10px;color:#2563eb;text-decoration:none;border:1px solid #bfdbfe;border-radius:20px;padding:2px 7px}
-.divr{height:1px;background:#f4f4f5;margin:.4rem 0}
-.tots{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.4rem;margin:.625rem 0}
-.tot{background:#f9fafb;border-radius:7px;padding:.5rem .625rem}
-.tl{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#71717a;margin-bottom:2px}
-.tv{font-size:16px;font-weight:800}.ts{font-size:9.5px;color:#71717a}
-.clbl{font-size:10.5px;font-weight:600;color:#71717a;margin:.375rem 0 .25rem}
-.leg{display:flex;gap:.75rem;margin-bottom:.25rem;flex-wrap:wrap}
-.li{display:flex;align-items:center;gap:3px;font-size:10px;color:#71717a}
-.lsq{width:7px;height:7px;border-radius:2px}
-.ch{height:120px;margin-bottom:.375rem}
-.ch svg{width:100%;height:100%;overflow:visible}
-.an{font-size:11px;color:#52525b;line-height:1.55}
-.an strong{font-weight:600;color:#18181b}
-.cal-h{background:#18181b;color:#fff;border-radius:10px;padding:.75rem 1.125rem;margin-bottom:.625rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.4rem}
-.cal-h h3{font-size:13px;font-weight:700}.cal-h p{font-size:10px;color:#a1a1aa;margin-top:1px}
-.cpill{font-size:9.5px;font-weight:700;background:#d97706;color:#fff;border-radius:20px;padding:2px 9px}
-.s4{display:grid;grid-template-columns:repeat(4,1fr);gap:.4rem;margin-bottom:.75rem}
-.si{background:#fff;border:1px solid #e4e4e7;border-radius:9px;padding:.5rem;text-align:center}
-.sn{font-size:20px;font-weight:800}.sl2{font-size:9.5px;color:#71717a;margin-top:1px;line-height:1.3}
-.dlbl{display:flex;align-items:center;gap:.4rem;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#52525b;margin-bottom:.4rem}
-.tp{font-size:9px;font-weight:700;background:#2563eb;color:#fff;border-radius:20px;padding:1px 7px}
-.hp{font-size:9px;font-weight:700;background:#dc2626;color:#fff;border-radius:20px;padding:1px 7px}
-.cp{font-size:9px;background:#f4f4f5;color:#71717a;border-radius:20px;padding:1px 7px}
-.tw{background:#fff;border:1px solid #e4e4e7;border-radius:10px;overflow:hidden;margin-bottom:.625rem}
-table{width:100%;border-collapse:collapse}
-thead tr{background:#fafafa}
-th{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#71717a;padding:6px 9px;text-align:left;border-bottom:1px solid #f4f4f5;white-space:nowrap}
-td{font-size:11px;color:#52525b;padding:7px 9px;border-bottom:1px solid #fafafa;vertical-align:middle}
-tr:last-child td{border-bottom:none}
-tr:hover td{background:#fafafa}
-.tkr{font-size:11px;font-weight:700;color:#18181b;font-family:monospace}
-.emp{font-weight:600;color:#18181b;font-size:11px}
-.hpre{display:inline-block;font-size:9px;font-weight:600;background:#fffbeb;color:#92400e;padding:1px 6px;border-radius:20px}
-.hpos{display:inline-block;font-size:9px;font-weight:600;background:#eff6ff;color:#1d4ed8;padding:1px 6px;border-radius:20px}
-.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
-.da{background:#dc2626}.dm{background:#d97706}.db{background:#16a34a}
-.ic{display:flex;align-items:center;gap:3px;white-space:nowrap}
-.ia{font-size:10.5px;color:#b91c1c;font-weight:600}.imi{font-size:10.5px;color:#d97706;font-weight:600}.ib{font-size:10.5px;color:#16a34a;font-weight:600}
-.set{font-size:9px;padding:1px 6px;border-radius:20px;border:1px solid #e4e4e7;color:#71717a;background:#fafafa;white-space:nowrap}
-.exp{font-size:10.5px;color:#71717a}
-.dc{font-size:11px;font-weight:700;color:#18181b;white-space:nowrap}
-.thm{background:#f9fafb;border:1px solid #e4e4e7;border-radius:11px;padding:1rem 1.25rem}
-.tht{font-size:13px;font-weight:700;margin-bottom:.75rem}
-.thg{display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.75rem}
-.thi{background:#fff;border:1px solid #e4e4e7;border-radius:9px;padding:.625rem .875rem}
-.thl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#71717a;margin-bottom:3px}
-.thv{font-size:13.5px;font-weight:800}
-.vg{color:#16a34a}.va{color:#d97706}.vr{color:#dc2626}
-.ths{font-size:10.5px;color:#71717a;margin-top:2px;line-height:1.35}
-.abox{background:#fffbeb;border:1px solid #fde68a;border-radius:9px;padding:.625rem .875rem;margin-top:.5rem}
-.al{font-size:9px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}
-.at{font-size:11.5px;color:#78350f;line-height:1.45}
-.obox{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;padding:.625rem .875rem;margin-top:.4rem}
-.ol{font-size:9px;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}
-.ot{font-size:11.5px;color:#14532d;line-height:1.45}
-.disc{font-size:10px;color:#a1a1aa;margin-top:.875rem;text-align:center;line-height:1.5}
-@media print{body{background:#fff;padding:0}.w{max-width:100%}.card,.tw,.thm,.mi,.si,.tot{break-inside:avoid}}
+    :root {
+      --bg: #0f1117; --bg2: #1a1d27; --bg3: #22263a; --border: #2d3148;
+      --text: #e2e8f0; --text2: #94a3b8;
+      --green: #16a34a; --red: #dc2626; --yellow: #d97706; --blue: #3b82f6; --accent: #6366f1;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; font-size: 14px; line-height: 1.5; }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .header { background: linear-gradient(135deg, #1e1b4b 0%, #0f1117 100%); padding: 24px 32px; border-bottom: 1px solid var(--border); }
+    .header-top { display: flex; align-items: center; justify-content: space-between; }
+    .header-title { font-size: 22px; font-weight: 700; color: #a5b4fc; letter-spacing: -0.3px; }
+    .header-sub { font-size: 13px; color: var(--text2); margin-top: 4px; }
+    .header-badge { background: #1e293b; border: 1px solid var(--border); border-radius: 20px; padding: 4px 14px; font-size: 12px; color: var(--text2); }
+
+    .macro-bar { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--bg2); }
+    .macro-item { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-right: 1px solid var(--border); flex: 1; }
+    .macro-item:last-child { border-right: none; }
+    .macro-icon { font-size: 18px; }
+    .macro-price { font-size: 15px; font-weight: 700; }
+    .macro-sub { font-size: 11px; color: var(--text2); margin-top: 1px; }
+    .macro-fg { min-width: 160px; }
+    .fg-circle { width: 44px; height: 44px; border-radius: 50%; border: 3px solid; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 800; flex-shrink: 0; }
+
+    .main { max-width: 1200px; margin: 0 auto; padding: 24px 20px; }
+    .section-title { font-size: 15px; font-weight: 700; color: #a5b4fc; margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    .section { margin-bottom: 32px; }
+
+    .cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; }
+    .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 16px; transition: border-color .2s; }
+    .card:hover { border-color: var(--accent); }
+    .card-header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+    .card-icon { font-size: 22px; flex-shrink: 0; margin-top: 2px; }
+    .card-title-wrap { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+    .card-titulo { font-size: 13px; font-weight: 600; line-height: 1.4; flex: 1; min-width: 180px; }
+    .card-corpo { font-size: 12.5px; color: #cbd5e1; line-height: 1.65; }
+    .card-corpo strong { color: #e2e8f0; }
+    .divr { margin: 10px 0 4px; border-top: 1px solid var(--border); }
+
+    .impacto-badge { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 12px; white-space: nowrap; flex-shrink: 0; }
+    .imp-h { background: #7f1d1d; color: #fca5a5; }
+    .imp-m { background: #78350f; color: #fcd34d; }
+    .imp-p { background: #14532d; color: #86efac; }
+
+    .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .tag { font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+    .tg { background: #14532d; color: #86efac; }
+    .tr { background: #7f1d1d; color: #fca5a5; }
+    .tn { background: #1e293b; color: #94a3b8; border: 1px solid var(--border); }
+
+    .fontes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+    .fonte-link { font-size: 10px; color: var(--text2); background: var(--bg3); padding: 2px 8px; border-radius: 8px; border: 1px solid var(--border); }
+    .fonte-link:hover { color: var(--blue); border-color: var(--blue); text-decoration: none; }
+
+    .etf-section { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+    .etf-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+    .etf-title { font-size: 14px; font-weight: 700; color: #a5b4fc; }
+    .ytd-badge { font-size: 12px; font-weight: 700; padding: 3px 12px; border-radius: 12px; }
+    .etf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 16px; }
+    .chart-label { font-size: 11px; color: var(--text2); margin-bottom: 6px; font-weight: 600; }
+    .acum-nota { font-size: 10.5px; color: #d97706; margin-top: 4px; text-align: center; }
+    .tot-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+    .tot-row { background: var(--bg3); border-radius: 8px; padding: 10px 12px; }
+    .tot-label { display: block; font-size: 10px; color: var(--text2); margin-bottom: 2px; }
+    .tot-val { display: block; font-size: 14px; font-weight: 700; }
+    .tot-sub { display: block; font-size: 9px; color: var(--text2); margin-top: 2px; }
+    .etf-analise { font-size: 12px; color: #cbd5e1; line-height: 1.65; background: var(--bg3); border-radius: 8px; padding: 12px 14px; border-left: 3px solid var(--accent); }
+
+    .calendario-section { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+    .fase-badge { display: inline-block; font-size: 11px; background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 3px 12px; color: var(--text2); margin-bottom: 14px; }
+    .destaques-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 16px; }
+    .dest-item { background: var(--bg3); border-radius: 8px; padding: 10px 12px; display: flex; align-items: center; gap: 8px; }
+    .dest-icon { font-size: 18px; }
+    .dest-label { font-size: 12px; font-weight: 600; flex: 1; }
+    .dest-data { font-size: 10px; color: var(--text2); white-space: nowrap; }
+    .hoje-box, .proximas-box { background: var(--bg3); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
+    .hoje-label, .prox-title { font-size: 11px; font-weight: 700; color: var(--text2); margin-bottom: 8px; text-transform: uppercase; letter-spacing: .5px; }
+    .emp-empty { font-size: 12px; color: var(--text2); font-style: italic; }
+    .prox-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+    .prox-row:last-child { border-bottom: none; }
+    .prox-data { font-size: 10px; color: var(--text2); min-width: 36px; }
+    .prox-nome { font-weight: 600; flex: 1; }
+    .prox-exp { font-size: 11px; color: var(--text2); }
+    .imp-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .da { background: var(--red); }
+    .dm { background: var(--yellow); }
+    .db { background: #4b5563; }
+
+    .termometro-section { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+    .termo-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 14px; }
+    .termo-row { background: var(--bg3); border-radius: 8px; padding: 12px 14px; }
+    .termo-label { display: block; font-size: 10px; color: var(--text2); margin-bottom: 3px; text-transform: uppercase; letter-spacing: .4px; }
+    .termo-val { display: block; font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+    .termo-sub { display: block; font-size: 11px; color: #94a3b8; }
+    .atencao-box { background: #1c1917; border: 1px solid #78350f; border-radius: 8px; padding: 10px 14px; margin-bottom: 10px; font-size: 12.5px; color: #fcd34d; }
+    .atencao-icon { margin-right: 4px; }
+    .oportunidade-box { background: #0c1a2e; border: 1px solid #1d4ed8; border-radius: 8px; padding: 10px 14px; font-size: 12.5px; color: #93c5fd; }
+    .op-icon { margin-right: 4px; }
+
+    .footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 16px 32px; text-align: center; font-size: 11px; color: var(--text2); }
+
+    @media (max-width: 768px) {
+      .macro-bar { flex-wrap: wrap; }
+      .macro-item { flex: 1 1 45%; border-right: none; border-bottom: 1px solid var(--border); }
+      .etf-grid { grid-template-columns: 1fr; }
+      .tot-grid { grid-template-columns: repeat(2, 1fr); }
+      .termo-grid { grid-template-columns: 1fr; }
+      .header { padding: 16px; }
+    }
 """
 
 
-# ─── render principal ─────────────────────────────────────────────────────────
+# ─── render principal ────────────────────────────────────────────────────────
 
 def render(data: dict) -> str:
-    m   = data["meta"]
-    mb  = data["macro_bar"]
-    th  = data["termometro"]
-    cal = data["calendario"]
+    m = data.get("meta", {})
+    mb = data.get("macro_bar", {})
+    cal = data.get("calendario", {})
+    th = data.get("termometro", {})
 
-    html = f"""<!DOCTYPE html>
+    # período semanal para rótulo dos gráficos ETF (usa o semanal_sub do BTC)
+    periodo_sem = (data.get("etf_btc", {}).get("totais", {})
+                   .get("semanal_sub", "").replace("semana de ", ""))
+
+    gerado = m.get("gerado_em", "")
+    gerado_txt = f" · Gerado às {gerado}" if gerado else ""
+
+    return f"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Briefing Diário — {m['data']}</title>
+<title>Briefing Financeiro — {m.get('data','')}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>{CSS}</style>
 </head>
 <body>
-<div class="w">
-
-<div class="hdr">
-  <div><h1>📊 Briefing Diário de Mercado</h1><p>Macro · Cripto · B3 · ETF Flows · Resultados 1T26</p></div>
-  <span class="date-p">{m['data']} · {m['dia_semana']}</span>
-</div>
-
-<div class="mbar">
-  <div class="mi"><div class="ml">₿ Bitcoin</div><div class="mv {mb['btc_cor']}">{mb['btc_preco']}</div><div class="ms">{mb['btc_var']}</div></div>
-  <div class="mi"><div class="ml">Ξ Ethereum</div><div class="mv {mb['eth_cor']}">{mb['eth_preco']}</div><div class="ms">{mb['eth_var']}</div></div>
-  <div class="mi"><div class="ml">💵 Dólar</div><div class="mv cb">{mb['dolar']}</div><div class="ms">{mb['dolar_sub']}</div></div>
-  <div class="mi"><div class="ml">🛢️ Brent</div><div class="mv {mb['brent_cor']}">{mb['brent']}</div><div class="ms">{mb['brent_var']}</div></div>
-  <div class="mi"><div class="ml">😱 Fear &amp; Greed</div><div class="mv" style="color:{mb.get('fear_greed', {}).get('cor', '#71717a')}">{mb.get('fear_greed', {}).get('valor', 'N/D')}</div><div class="ms">{mb.get('fear_greed', {}).get('sentimento', 'dado não disponível')}</div></div>
-</div>
-
-<div class="sec"><div class="sl">🏦 Bancos Centrais</div>{card_section(data['banco_central'])}</div>
-<div class="sec"><div class="sl">🇺🇸 Macro Global & Declarações do Presidente dos EUA</div>{card_section(data['trump_macro'])}</div>
-<div class="sec"><div class="sl">₿ Top 3 — Cripto</div>{card_section(data['cripto_top3'])}</div>
-
-<div class="sec">
-  <div class="sl">📈 ETF Flows — BTC e ETH</div>
-  {card_etf(data['etf_btc'], 'BTC', 'https://farside.co.uk/btc/')}
-  {card_etf(data['etf_eth'], 'ETH', 'https://farside.co.uk/eth/')}
-</div>
-
-<div class="sec"><div class="sl">🇧🇷 Top 2 — Mercado Brasileiro</div>{card_section(data['brasil_top2'])}</div>
-
-<div class="sec">{render_calendario(cal)}</div>
-
-<div class="sec">
-  <div class="sl">📊 Termômetro do dia</div>
-  <div class="thm">
-    <div class="tht">Painel de viés — {th['data_completa']}</div>
-    <div class="thg">
-      <div class="thi"><div class="thl">₿ Cripto</div><div class="thv {th['cripto_cor']}">{th['cripto_val']}</div><div class="ths">{th['cripto_sub']}</div></div>
-      <div class="thi"><div class="thl">📊 B3</div><div class="thv {th['b3_cor']}">{th['b3_val']}</div><div class="ths">{th['b3_sub']}</div></div>
-      <div class="thi"><div class="thl">💵 Dólar (DXY)</div><div class="thv {th['dolar_cor']}">{th['dolar_val']}</div><div class="ths">{th['dolar_sub']}</div></div>
-      <div class="thi"><div class="thl">🛢️ Brent</div><div class="thv {th['brent_cor']}">{th['brent_val']}</div><div class="ths">{th['brent_sub']}</div></div>
+<div class="header">
+  <div class="header-top">
+    <div>
+      <div class="header-title">📊 Briefing Financeiro Diário</div>
+      <div class="header-sub">{m.get('dia_semana','')}, {m.get('data','')}{gerado_txt}</div>
     </div>
-    <div class="abox"><div class="al">⚠️ Maior atenção hoje</div><div class="at">{th['atencao']}</div></div>
-    <div class="obox"><div class="ol">💡 Oportunidade potencial</div><div class="ot">{th['oportunidade']}</div></div>
+    <div class="header-badge">Economista Sênior · Análise de Mercado</div>
   </div>
 </div>
 
-<p class="disc">Fontes: {data['fontes_rodape']} · {m['data']} · Não constitui recomendação de investimento · Dados ETF flows com atraso de 1 dia útil</p>
+{macro_bar_html(mb)}
+
+<div class="main">
+
+  <div class="section">
+    <div class="section-title">🏦 Banco Central &amp; Macro</div>
+    {cards_grid(data.get('banco_central', []))}
+  </div>
+
+  <div class="section">
+    <div class="section-title">🇺🇸 Trump &amp; Macro Global</div>
+    {cards_grid(data.get('trump_macro', []))}
+  </div>
+
+  <div class="section">
+    <div class="section-title">₿ Cripto — Top Notícias</div>
+    {cards_grid(data.get('cripto_top3', []))}
+  </div>
+
+  <div class="section">
+    <div class="section-title">📊 ETF Flows — Spot Bitcoin</div>
+    {etf_section(data.get('etf_btc', {}), 'BTC', periodo_sem)}
+  </div>
+
+  <div class="section">
+    <div class="section-title">📊 ETF Flows — Spot Ethereum</div>
+    {etf_section(data.get('etf_eth', {}), 'ETH', periodo_sem)}
+  </div>
+
+  <div class="section">
+    <div class="section-title">🇧🇷 Brasil — Destaques</div>
+    {cards_grid(data.get('brasil_top2', []))}
+  </div>
+
+  <div class="section">
+    {calendario_html(cal)}
+  </div>
+
+  <div class="section">
+    {termometro_html(th)}
+  </div>
+
+</div>
+
+<div class="footer">
+  <strong>Fontes:</strong> {data.get('fontes_rodape','')}<br>
+  Gerado automaticamente por Briefing Engine · {m.get('data','')}{gerado_txt}
 </div>
 </body>
 </html>"""
 
-    return html
 
-
-# ─── main ─────────────────────────────────────────────────────────────────────
+# ─── main ────────────────────────────────────────────────────────────────────
 
 def main():
     if len(sys.argv) < 2:
-        print("Uso: python render_briefing.py briefing_YYYYMMDD.json")
+        print("Uso: python render_briefing.py output/briefing_YYYYMMDD.json")
         sys.exit(1)
 
     json_path = Path(sys.argv[1])
@@ -493,12 +545,9 @@ def main():
     print(f"📂 Lendo {json_path.name}...")
     data = json.loads(json_path.read_text(encoding="utf-8"))
 
-    # Gera HTML
     html_path = json_path.with_suffix(".html")
-    html = render(data)
-    html_path.write_text(html, encoding="utf-8")
+    html_path.write_text(render(data), encoding="utf-8")
     print(f"✅ HTML gerado: {html_path.name}")
-
     print(f"\n🎯 Pronto! Arquivo em: {json_path.parent.resolve()}")
 
 
